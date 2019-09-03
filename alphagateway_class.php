@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * @author      Antreas Gribas
  */
 class WC_Gateway_Alpha extends WC_Payment_Gateway {
-	
+
 
     /**
      * Constructor for the gateway.
@@ -39,16 +39,16 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
         $this->instructions       = $this->get_option( 'instructions', $this->description );
 		$this->MerchantId = $this->get_option('MerchantId');
 		$this->Secret = $this->get_option('Secret');
-		
-		$this->AlphaBankUrl = $this->get_option('testmode') === 'yes' ? "https://alpha.test.modirum.com/vpos/shophandlermpi" : "https://www.alphaecommerce.gr/vpos/shophandlermpi";
-		
-		$this->InstallmentsActive = $this->get_option('installmentsActive') === 'yes' ? true : false;
-		
-		$this->autosubmitPaymentForm = $this->get_option('autosubmitPaymentForm') === 'yes' ? true : false;
 
+		$this->AlphaBankUrl = $this->get_option('testmode') === 'yes' ? "https://alpha.test.modirum.com/vpos/shophandlermpi" : "https://www.alphaecommerce.gr/vpos/shophandlermpi";
+
+		$this->InstallmentsActive = $this->get_option('installmentsActive') === 'yes' ? true : false;
+
+		$this->autosubmitPaymentForm = $this->get_option('autosubmitPaymentForm') === 'yes' ? true : false;
+        add_filter('woocommerce_get_country_locale', array($this, 'custom_country_locale'));
         // Customer Emails
         add_action( 'woocommerce_email_before_order_table', array( $this, 'email_instructions' ), 10, 3 );
-		
+
 		//Actions
 		add_action('woocommerce_receipt_' . $this->id, array( $this, 'receipt_page' ));
 		add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
@@ -59,7 +59,16 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 		// Set the installments array
 		$this->installmentsArray = Array(100 => 4, 200 => 8, 300 => 12);
     }
-	
+
+	public function custom_country_locale( $locale ) {
+
+		if ( ! empty( $locale['GR']['state'] ) ) {
+			$locale['GR']['state']['required'] = true;
+		}
+
+		return $locale;
+	}
+
 		/**
 	 * Check if this gateway is enabled.
 	 *
@@ -76,7 +85,7 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 
 		return true;
 	}
-    
+
 	 /**
      * Initialise Gateway Settings Form Fields.
      */
@@ -153,8 +162,8 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 			)
  	   );
     }
-	
-	
+
+
 	protected function get_alpha_args( $order, $uniqid, $installments ) {
 		// WC_Gateway_Paypal::log( 'Generating payment form for order ' . $order->get_order_number() . '. Notify URL: ' . $this->notify_url );
 		$return = WC()->api_request_url( 'WC_Gateway_Alpha' );
@@ -166,12 +175,17 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
                 'postcode'      => ( WC()->version >= '3.0.0' ) ? $order->get_billing_postcode() : $order->billing_postcode,
                 'country'       => ( WC()->version >= '3.0.0' ) ? $order->get_billing_country() : $order->billing_country
 				);
-		
+
+		$states = WC()->countries->get_states( $address['country'] );
+		if ( is_array( $states ) && !empty( $states ) ) {
+			$address['state'] = $states[ $address['state'] ];
+		}
+
 		$lang = 'el';
 		if (substr(get_locale(), 0, 2) == 'en') {
 			$lang = 'en';
 		}
-		
+
 		$args = array(
 			'mid'         => $this->MerchantId,
 			'lang'        => $lang,
@@ -179,22 +193,27 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 			'orderDesc'   => 'Name: ' . $order->get_formatted_billing_full_name() . ' Address: ' . implode(",", $address) ,
 			'orderAmount' => wc_format_decimal($order->get_total(), 2, false),
 			'currency'    => 'EUR',
-			'payerEmail'  => ( WC()->version >= '3.0.0' ) ? $order->get_billing_email() : $order->billing_email
+			'payerEmail'  => ( WC()->version >= '3.0.0' ) ? $order->get_billing_email() : $order->billing_email,
+            'billCountry' => $address['country'],
+			'billState'   => $address['state'],
+			'billZip'     => $address['postcode'],
+			'billCity'    => $address['city'],
+			'billAddress' => $address['address_1'],
 		);
-		
+
 		if ($installments > 0) {
 			$args['extInstallmentoffset'] = 0;
 			$args['extInstallmentperiod'] = $installments;
 		};
-		
+
 		$args = array_merge($args, array(
 			'confirmUrl' => add_query_arg( 'confirm', ( WC()->version >= '3.0.0' ) ? $order->get_id() : $order->id , $return),
-			'cancelUrl'  => add_query_arg( 'cancel', ( WC()->version >= '3.0.0' ) ? $order->get_id() : $order->id , $return), 
+			'cancelUrl'  => add_query_arg( 'cancel', ( WC()->version >= '3.0.0' ) ? $order->get_id() : $order->id , $return),
 		));
-				
+
 		return apply_filters( 'woocommerce_alpha_args', $args , $order );
 	}
-	
+
 	/**
 	* Output for the order received page.
 	* */
@@ -202,7 +221,7 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 		echo '<p>' . __('Thank you - your order is now pending payment. Please click the button below to proceed.', 'woocommerce') . '</p>';
 		$order = wc_get_order( $order_id );
 		$uniqid = uniqid();
-						
+
 		$form_data = $this->get_alpha_args($order, $uniqid, 0);
 		$digest = base64_encode(sha1(implode("", array_merge($form_data, array('secret' => $this->Secret))), true));
 
@@ -210,7 +229,7 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 		foreach ($form_data as $key => $value) {
 			$html_form_fields[] = '<input type="hidden" name="'.esc_attr( $key ).'" value="'.esc_attr($value).'" />';
 		}
-		
+
 		?>
 
 		<?php if ( $this->autosubmitPaymentForm ) :?>
@@ -218,7 +237,7 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 		<script type="text/javascript">
 
 		jQuery(document).ready(function(){
-  
+
 		    var alphabank_payment_form = document.getElementById('shopform1');
 			alphabank_payment_form.style.visibility="hidden";
 			alphabank_payment_form.submit();
@@ -233,23 +252,23 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 				echo $field;
 			?>
 			<input type="hidden" name="digest" value="<?php echo $digest ?>"/>
-			
-			<?php	
+
+			<?php
 				if ($this->InstallmentsActive) {
-					$this->installments(wc_format_decimal($order->get_total(), 2, false), $uniqid, $order); 
+					$this->installments(wc_format_decimal($order->get_total(), 2, false), $uniqid, $order);
 				}
 			?>
-			
-			<input type="submit" class="button alt" id="submit_twocheckout_payment_form" value="<?php echo __( 'Pay via Alpha bank', 'woocommerce' ) ?>" /> 
+
+			<input type="submit" class="button alt" id="submit_twocheckout_payment_form" value="<?php echo __( 'Pay via Alpha bank', 'woocommerce' ) ?>" />
 			<a class="button cancel" href="<?php echo esc_url( $order->get_cancel_order_url() )?>"><?php echo __( 'Cancel order &amp; restore cart', 'woocommerce' )?></a>
-			
-		</form>		
+
+		</form>
 		<?php
-		
-		
+
+
 		$order->update_status( 'pending', __( 'Sent request to Alpha bank with orderID: ' . $form_data['orderid'] , 'woocommerce' ) );
 	}
-    
+
     /**
      * Process the payment and return the result.
      *
@@ -264,11 +283,11 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 		 	'redirect'	=> $order->get_checkout_payment_url( true ) // $this->get_return_url( $order )
 		);
 	}
-	
+
 	/**
 		* Verify a successful Payment!
 	* */
-	public function check_response() { 
+	public function check_response() {
 		$required_response = array(
 			'mid' => '',
 			'orderid' => '',
@@ -277,7 +296,7 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 			'currency' => '',
 			'paymentTotal' => ''
 		);
-		
+
 		$notrequired_response = array(
 			'message' => '',
 			'riskScore' => '',
@@ -285,13 +304,13 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 			'txId' => '',
 			'sequence' => '',
 			'seqTxId' => '',
-			'paymentRef' => '' 
+			'paymentRef' => ''
 		);
-		
+
 		if (!isset($_REQUEST['digest'])){
 			wp_die( 'Alpha Bank Request Failure', 'Alpha Bank Gateway', array( 'response' => 500 ) );
 		}
-		
+
 		foreach ($required_response as $key => $value) {
 			if (isset($_REQUEST[$key])){
 				$required_response[$key] = $_REQUEST[$key];
@@ -301,7 +320,7 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 				wp_die( 'Alpha Bank Request Failure', 'Alpha Bank Gateway', array( 'response' => 500 ) );
 			}
 		}
-		
+
 		foreach ($notrequired_response as $key => $value) {
 			if (isset($_REQUEST[$key])){
 				$required_response[$key] = $_REQUEST[$key];
@@ -312,11 +331,11 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 
 		$string_form_data = array_merge($required_response, array('secret' => $this->Secret));
 		$digest = base64_encode(sha1(implode("", $string_form_data), true));
-		
+
 		if ($digest != $_REQUEST['digest']){
 			wp_die( 'Alpha Bank Digest Error', 'Alpha Bank Gateway', array( 'response' => 500 ) );
 		}
-		
+
 		if(isset($_REQUEST['cancel'])){
 			$order = wc_get_order(wc_clean($_REQUEST['cancel']));
 			if (isset($order)){
@@ -339,7 +358,7 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 				}
 			}
 		}
-		
+
 		// something went wrong so die
 		wp_die( 'Unspecified Error', 'Payment Gateway error', array( 'response' => 500 ) );
 	}
@@ -383,9 +402,9 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 		$installMentsField = '';
 		if ($installments > 0 && is_int($installments)) {
 			$installMentsField = '<select name="extInstallmentperiod">';
-			
+
 			for ($i = 0; $i <= $installments; $i++) {
-				
+
 				$form_data = $this->get_alpha_args($order, $uniqid, $i);
 				$digest = base64_encode(sha1(implode("", array_merge($form_data, array('secret' => $this->Secret))), true));
 
@@ -393,13 +412,13 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 			}
 
 			$installMentsField .= '</select>';
-			
+
 			$installMentsField .= "<input type='hidden' value='0' name='extInstallmentoffset' />";
 
 			echo 	'<fieldset class="wc-payment-form">
 						<p class="form-row form-row-wide">
 							<label for="extInstallmentperiod">' . __( 'Άτοκες Δόσεις ', 'woocommerce' ) . ' </label>
-							' . $installMentsField   
+							' . $installMentsField
 						. '</p>
 						<div class="clear"></div>
 					</fieldset>';
@@ -417,7 +436,7 @@ class WC_Gateway_Alpha extends WC_Payment_Gateway {
 					this.digest.value = $(this.extInstallmentperiod).find(":selected").data("digest");
 				});
 			');
-			
+
 		}
 	}
 }
